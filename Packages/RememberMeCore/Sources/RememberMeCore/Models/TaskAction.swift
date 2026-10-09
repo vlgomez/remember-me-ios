@@ -6,8 +6,9 @@ public enum TaskDestination: String, Sendable, Hashable, Codable, CaseIterable {
 
 /// Referencia a un evento que ya existe en el calendario, tal como la describió el usuario.
 ///
-/// No contiene un identificador de EventKit: localizar el evento (y preguntar si hay varios
-/// o ninguno) corresponde a la Fase B.
+/// No contiene un identificador de EventKit. Localizar el evento (y preguntar si hay varios
+/// o ninguno) queda para una fase posterior: en la Fase B, guardar esta acción devuelve
+/// `SaveError.unsupportedAction` y no modifica ningún evento.
 public struct ExistingEventReference: Sendable, Hashable, Codable {
     /// Descripción literal del usuario, por ejemplo "mi cita".
     public let userDescription: String
