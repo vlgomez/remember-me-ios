@@ -15,7 +15,7 @@ App nativa para iPhone que convierte frases en español ("Llamar al taller el vi
 | App SwiftUI mínima: cinco pestañas con estados vacíos | |
 | Workflow de GitHub Actions para macOS | |
 
-**Este código no se ha compilado todavía.** Se escribió en un entorno Linux sin Swift ni Xcode. La primera compilación y la primera ejecución de los tests serán las del workflow de CI o las de un Mac.
+**Validación CI (9 de octubre de 2026):** el workflow de GitHub Actions terminó correctamente en los dos jobs: `RememberMeCore · swift test` y `App iOS · compilación para simulador`. El informe de la ejecución registra 82 tests y 0 fallos; XcodeGen generó `RememberMe.xcodeproj` y `xcodebuild` completó la compilación para el simulador sin firma. [Ver ejecución de CI](https://github.com/vlgomez/remember-me-ios/actions/runs/37915966741). Esta compilación valida que el código compila para el simulador, no que la app esté lista para instalarse en un iPhone físico.
 
 ## Estructura
 
@@ -113,7 +113,7 @@ Cualquier otra cosa se queda en el título. El parser nunca rellena un hueco por
 
 ## Limitaciones conocidas
 
-- El código no se ha compilado ni se han ejecutado los tests (ver arriba).
+- La compilación validada hasta ahora es para el simulador y sin firma; todavía no se ha validado la instalación en un iPhone físico ni la integración real con Calendar y Reminders.
 - El parser cubre un subconjunto pequeño del español; está pensado para ampliarse en la Fase C.
 - "Mañana" dicho de madrugada (por ejemplo, a las 00:30) se interpreta como el día siguiente.
 - "en <Palabra en mayúscula>" se toma como ubicación, aunque no lo sea ("en Navidad"). Como es una deducción, queda pendiente de confirmar.
