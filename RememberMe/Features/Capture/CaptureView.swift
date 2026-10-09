@@ -56,6 +56,23 @@ struct CaptureView: View {
         } message: {
             Text("Ya guardaste esta entrada, pero no se encuentra en \(model.kind.entity.appName): puede que la borraras. ¿Quieres crearla de nuevo?")
         }
+        .confirmationDialog(
+            "Intento sin confirmar",
+            isPresented: Binding(
+                get: { model.unconfirmedAttempt != nil },
+                set: { if !$0 { model.unconfirmedAttempt = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: model.unconfirmedAttempt
+        ) { _ in
+            // Crear puede dejar un duplicado: solo lo hace si el usuario lo pide tras revisarlo.
+            Button("Crear igualmente") {
+                Task { await model.save(createDespiteUnconfirmedAttempt: true) }
+            }
+            Button("No crear", role: .cancel) {}
+        } message: { pending in
+            Text(SaveError.unconfirmedPreviousAttempt(pending).userMessage)
+        }
     }
 
     private var entrySection: some View {

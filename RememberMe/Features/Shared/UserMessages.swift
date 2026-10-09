@@ -71,7 +71,23 @@ extension SaveError {
         case .store(let error):
             return error.userMessage
         case .registry:
-            return "No se pudo leer el registro de elementos guardados. Para no crear duplicados, no se ha guardado nada."
+            return "No se pudo leer o actualizar el registro de elementos guardados. Para no crear duplicados, no se ha guardado nada."
+        case .createdButNotRegistered(let record):
+            return "Se ha creado en \(record.reference.entity.appName), pero no se pudo anotar para evitar duplicados. Vuelve a pulsar «Guardar» para completar el registro: no se creará otro."
+        case .unconfirmedPreviousAttempt(let pending):
+            let when = pending.startedAt.formatted(date: .abbreviated, time: .shortened)
+            return "Un intento de guardar «\(pending.title)» (\(when)) no llegó a confirmarse. Puede que ya esté en \(pending.destination.entity.appName): revísalo antes de decidir."
+        }
+    }
+}
+
+extension TaskDestination {
+    var entity: EventStoreEntity {
+        switch self {
+        case .appleCalendar:
+            return .events
+        case .appleReminders:
+            return .reminders
         }
     }
 }

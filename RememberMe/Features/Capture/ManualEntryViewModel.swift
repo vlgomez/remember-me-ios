@@ -93,6 +93,8 @@ final class ManualEntryViewModel {
     var permissionExplanation: AccessGuidance?
     /// Elemento guardado antes y borrado fuera de la app: se pregunta si crearlo de nuevo.
     var missingRecord: SavedItemRecord?
+    /// Intento anterior sin confirmar (puede que el elemento ya exista): se pregunta qué hacer.
+    var unconfirmedAttempt: PendingCreation?
 
     private let environment: AppEnvironment
     /// Identificador de intención por contenido del formulario, para que repetir el mismo
@@ -216,7 +218,9 @@ final class ManualEntryViewModel {
     /// - Parameters:
     ///   - explained: el usuario ya vio la explicación previa a la petición del sistema.
     ///   - recreate: el usuario pidió crear de nuevo un elemento borrado fuera de la app.
-    func save(explained: Bool = false, recreate: Bool = false) async {
+    ///   - createDespiteUnconfirmedAttempt: el usuario revisó Calendario o Recordatorios y pidió
+    ///     crear el elemento aunque un intento anterior pudo crearlo ya.
+    func save(explained: Bool = false, recreate: Bool = false, createDespiteUnconfirmedAttempt: Bool = false) async {
         guard let review, isReviewCurrent, !isSaving else { return }
         banner = nil
         let entity = kind.entity
@@ -240,6 +244,7 @@ final class ManualEntryViewModel {
 
         var options = review.options
         options.recreateIfMissing = recreate
+        options.createDespiteUnconfirmedAttempt = createDespiteUnconfirmedAttempt
         do {
             let outcome = try await environment.saveTask.save(review.intent, options: options)
             switch outcome {
@@ -248,13 +253,18 @@ final class ManualEntryViewModel {
                 await loadListsIfAllowed()
             case .alreadySaved:
                 banner = .notice("Ya estaba guardado en \(entity.appName). No se ha creado otro.")
+            case .registrationRecovered:
+                banner = .success("Ya estaba creado en \(entity.appName) y ahora queda registrado. No se ha creado otro.")
             case .previouslySavedButMissing(let record):
                 missingRecord = record
             }
         } catch let error as SaveError {
-            if case .permission(let failedEntity, let permission) = error {
+            switch error {
+            case .permission(let failedEntity, let permission):
                 banner = .access(AccessGuidance(entity: failedEntity, permission: permission))
-            } else {
+            case .unconfirmedPreviousAttempt(let pending):
+                unconfirmedAttempt = pending
+            default:
                 banner = .failure(error.userMessage)
             }
         } catch {
