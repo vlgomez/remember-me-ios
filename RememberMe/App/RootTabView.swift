@@ -7,9 +7,9 @@ struct RootTabView: View {
         TabView {
             TodayView()
                 .tabItem { Label("Hoy", systemImage: "sun.max") }
-            CaptureView()
+            CaptureView(environment: environment)
                 .tabItem { Label("Añadir", systemImage: "plus.circle") }
-            AgendaView()
+            AgendaView(environment: environment)
                 .tabItem { Label("Calendario", systemImage: "calendar") }
             RemindersOverviewView()
                 .tabItem { Label("Recordatorios", systemImage: "bell") }
