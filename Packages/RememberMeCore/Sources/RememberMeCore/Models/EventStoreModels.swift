@@ -143,6 +143,28 @@ public struct SavedItemRecord: Sendable, Hashable, Codable {
     }
 }
 
+/// Intento de creación anotado en el registro *antes* de pedir a EventKit que cree el elemento.
+///
+/// Crear un elemento en EventKit y escribir su referencia en el registro local son dos
+/// operaciones independientes: no forman una transacción. Si la escritura final falla, o la app
+/// se cierra entre las dos, esta marca queda como prueba de que hubo un intento cuyo resultado
+/// no se pudo confirmar, y el siguiente guardado de la misma intención no crea nada sin
+/// preguntar al usuario.
+public struct PendingCreation: Sendable, Hashable, Codable {
+    public let intentID: TaskIntentID
+    public let destination: TaskDestination
+    /// Título del elemento, para que el usuario pueda buscarlo en Calendar o Reminders.
+    public let title: String
+    public let startedAt: Date
+
+    public init(intentID: TaskIntentID, destination: TaskDestination, title: String, startedAt: Date) {
+        self.intentID = intentID
+        self.destination = destination
+        self.title = title
+        self.startedAt = startedAt
+    }
+}
+
 /// Datos de un recordatorio que se va a crear. Todo lo que contiene procede de una intención confirmada.
 public struct ReminderDraft: Sendable, Hashable {
     public let title: String

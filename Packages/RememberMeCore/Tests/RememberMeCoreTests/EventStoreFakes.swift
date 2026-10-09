@@ -170,6 +170,18 @@ struct FailingRegistry: SavedItemRegistry {
     func save(_ record: SavedItemRecord) async throws {
         throw Failure()
     }
+
+    func pendingCreation(for intentID: TaskIntentID) async throws -> PendingCreation? {
+        throw Failure()
+    }
+
+    func markPending(_ pending: PendingCreation) async throws {
+        throw Failure()
+    }
+
+    func clearPending(for intentID: TaskIntentID) async throws {
+        throw Failure()
+    }
 }
 
 /// Error genérico (no `EventStoreError`) para comprobar cómo se envuelven los errores inesperados.

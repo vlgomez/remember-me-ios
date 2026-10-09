@@ -31,7 +31,22 @@ public protocol StoredItemChecking: Sendable {
 }
 
 /// Registro persistente de los elementos creados, indexado por intención.
+///
+/// Además de los elementos creados, guarda las marcas de intentos pendientes (`PendingCreation`)
+/// que el caso de uso escribe antes de llamar a EventKit.
 public protocol SavedItemRegistry: Sendable {
     func record(for intentID: TaskIntentID) async throws -> SavedItemRecord?
+
+    /// Guarda el registro de un elemento creado y, en la misma escritura, borra la marca
+    /// pendiente de esa intención.
     func save(_ record: SavedItemRecord) async throws
+
+    /// Marca de un intento anterior que no llegó a confirmarse, si la hay.
+    func pendingCreation(for intentID: TaskIntentID) async throws -> PendingCreation?
+
+    /// Anota un intento antes de llamar a EventKit. Si falla, no se debe crear nada.
+    func markPending(_ pending: PendingCreation) async throws
+
+    /// Retira la marca cuando EventKit informó de que no creó el elemento.
+    func clearPending(for intentID: TaskIntentID) async throws
 }

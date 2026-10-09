@@ -12,17 +12,23 @@ public struct SaveOptions: Sendable, Hashable {
     /// Si la intención ya se guardó y el elemento se borró después desde Calendar o Reminders,
     /// solo se vuelve a crear si el usuario lo pide explícitamente.
     public var recreateIfMissing: Bool
+    /// Si un intento anterior de guardar esta intención no llegó a confirmarse
+    /// (`SaveError.unconfirmedPreviousAttempt`), solo se vuelve a crear si el usuario lo pide
+    /// explícitamente, sabiendo que puede quedar un duplicado.
+    public var createDespiteUnconfirmedAttempt: Bool
 
     public init(
         eventDuration: TimeInterval? = nil,
         calendarIdentifier: String? = nil,
         reminderListIdentifier: String? = nil,
-        recreateIfMissing: Bool = false
+        recreateIfMissing: Bool = false,
+        createDespiteUnconfirmedAttempt: Bool = false
     ) {
         self.eventDuration = eventDuration
         self.calendarIdentifier = calendarIdentifier
         self.reminderListIdentifier = reminderListIdentifier
         self.recreateIfMissing = recreateIfMissing
+        self.createDespiteUnconfirmedAttempt = createDespiteUnconfirmedAttempt
     }
 }
 
@@ -34,11 +40,17 @@ public enum SaveOutcome: Sendable, Hashable {
     case alreadySaved(SavedItemRecord)
     /// Esta intención ya se guardó, pero el elemento ya no existe. No se recrea sin `recreateIfMissing`.
     case previouslySavedButMissing(SavedItemRecord)
+    /// Un guardado anterior de esta sesión creó el elemento, pero no pudo registrarlo
+    /// (`SaveError.createdButNotRegistered`). Ahora se ha registrado sin crear nada nuevo.
+    case registrationRecovered(SavedItemRecord)
 
     /// Registro asociado al resultado, sea nuevo o anterior.
     public var record: SavedItemRecord {
         switch self {
-        case .saved(let record), .alreadySaved(let record), .previouslySavedButMissing(let record):
+        case .saved(let record),
+             .alreadySaved(let record),
+             .previouslySavedButMissing(let record),
+             .registrationRecovered(let record):
             return record
         }
     }
@@ -58,7 +70,15 @@ public enum SaveError: Error, Sendable, Hashable {
     /// No hay acceso total al destino.
     case permission(EventStoreEntity, EventStorePermission)
     case store(EventStoreError)
+    /// No se pudo leer el registro o anotar el intento antes de crear. No se ha creado nada.
     case registry(String)
+    /// EventKit creó el elemento, pero su referencia no se pudo guardar en el registro.
+    /// El elemento existe; un reintento en esta sesión solo completa el registro, sin crear otro.
+    case createdButNotRegistered(SavedItemRecord)
+    /// Hay un intento anterior de guardar esta intención cuyo resultado no se pudo confirmar
+    /// (por ejemplo, la app se cerró o el registro falló justo después de crear). Puede que el
+    /// elemento ya exista. No se crea nada sin `createDespiteUnconfirmedAttempt`.
+    case unconfirmedPreviousAttempt(PendingCreation)
 }
 
 /// Convierte una intención validada en borradores de EventKit, sin inventar datos.
@@ -168,7 +188,23 @@ public struct EventStoreDraftBuilder: Sendable {
 /// - Comprueba que hay datos suficientes (por ejemplo, la duración de un evento) antes de pedir permiso.
 /// - Pide permiso únicamente si el usuario aún no ha decidido, porque se llama al pulsar "Guardar".
 /// - No crea duplicados: si la intención ya se guardó, devuelve el registro existente.
-/// - No modifica ni borra elementos existentes.
+/// - No modifica ni borra elementos existentes, y no recrea un elemento borrado sin confirmación.
+///
+/// ## Fallos entre EventKit y el registro
+///
+/// Crear en EventKit y escribir en el registro local no son una transacción atómica. Para que un
+/// fallo entre las dos operaciones no acabe en un duplicado silencioso:
+///
+/// 1. Antes de crear se anota el intento en el registro (`markPending`). Si esa escritura falla,
+///    no se llama a EventKit (`SaveError.registry`).
+/// 2. Si EventKit lanza un error, se retira la marca: se da por hecho que no creó nada.
+/// 3. Si EventKit crea el elemento pero la escritura final falla, se lanza
+///    `SaveError.createdButNotRegistered` con la referencia, que además se guarda en memoria.
+///    Un reintento en la misma sesión solo vuelve a escribir el registro
+///    (`SaveOutcome.registrationRecovered`), sin llamar a EventKit.
+/// 4. Si no hay referencia en memoria (la app se reinició) pero sí una marca pendiente, no se crea
+///    nada: se lanza `SaveError.unconfirmedPreviousAttempt` y decide el usuario
+///    (`SaveOptions.createDespiteUnconfirmedAttempt`).
 public struct SaveConfirmedTaskUseCase: Sendable {
     private let access: any EventStoreAccessProviding
     private let calendar: any CalendarEventStoring
@@ -176,6 +212,8 @@ public struct SaveConfirmedTaskUseCase: Sendable {
     private let presence: any StoredItemChecking
     private let registry: any SavedItemRegistry
     private let dates: DateContext
+    /// Elementos creados en esta sesión cuyo registro falló. Se comparte entre copias del caso de uso.
+    private let unregistered = UnregisteredCreations()
 
     public init(
         access: any EventStoreAccessProviding,
@@ -236,6 +274,7 @@ public struct SaveConfirmedTaskUseCase: Sendable {
         // 4. Duplicados: la referencia persistente manda, no el título.
         let previous = try await registryCall { try await registry.record(for: current.id) }
         if let existing = previous {
+            await unregistered.forget(current.id)
             let stillExists = try await storeCall { try await presence.itemExists(existing.reference) }
             if stillExists {
                 return .alreadySaved(existing)
@@ -243,18 +282,41 @@ public struct SaveConfirmedTaskUseCase: Sendable {
             if !options.recreateIfMissing {
                 return .previouslySavedButMissing(existing)
             }
+        } else if let created = await unregistered.record(for: current.id) {
+            // Este proceso sabe qué creó EventKit: se completa el registro sin volver a crear.
+            return try await recoverRegistration(of: created)
+        } else if let pending = try await registryCall({ try await registry.pendingCreation(for: current.id) }),
+                  !options.createDespiteUnconfirmedAttempt {
+            // Un intento anterior pudo crear el elemento y no hay forma de saberlo con certeza.
+            throw SaveError.unconfirmedPreviousAttempt(pending)
         }
 
-        // 5. Creación.
+        // 5. Anotar el intento antes de crear. Si no se puede anotar, no se crea nada.
+        let pending = PendingCreation(
+            intentID: current.id,
+            destination: current.destination,
+            title: current.title.value.trimmingCharacters(in: .whitespacesAndNewlines),
+            startedAt: dates.now()
+        )
+        try await registryCall { try await registry.markPending(pending) }
+
+        // 6. Creación. Si EventKit lanza un error, no guardó el elemento: se retira la marca.
+        //    Si tampoco se puede retirar, el siguiente intento preguntará al usuario (es más
+        //    prudente preguntar de más que duplicar).
         let reference: StoredItemReference
-        switch draft {
-        case .reminder(let reminderDraft):
-            reference = try await storeCall { try await reminders.createReminder(reminderDraft) }
-        case .event(let eventDraft):
-            reference = try await storeCall { try await calendar.createEvent(eventDraft) }
+        do {
+            switch draft {
+            case .reminder(let reminderDraft):
+                reference = try await storeCall { try await reminders.createReminder(reminderDraft) }
+            case .event(let eventDraft):
+                reference = try await storeCall { try await calendar.createEvent(eventDraft) }
+            }
+        } catch {
+            try? await registry.clearPending(for: current.id)
+            throw error
         }
 
-        // 6. Registro para no duplicar si se repite la operación.
+        // 7. Registro definitivo (borra la marca en la misma escritura).
         let record = SavedItemRecord(
             intentID: current.id,
             reference: reference,
@@ -262,8 +324,30 @@ public struct SaveConfirmedTaskUseCase: Sendable {
             pendingAlertDay: alarm.pendingDay,
             savedAt: dates.now()
         )
-        try await registryCall { try await registry.save(record) }
+        do {
+            try await registry.save(record)
+        } catch {
+            // El elemento existe en EventKit, pero no hay referencia persistida. Se recuerda en
+            // memoria para que un reintento solo complete el registro; la marca pendiente sigue
+            // en disco por si la app se cierra antes.
+            await unregistered.remember(record)
+            throw SaveError.createdButNotRegistered(record)
+        }
+        await unregistered.forget(current.id)
         return .saved(record)
+    }
+
+    /// Completa el registro de un elemento que EventKit ya creó en esta sesión. No crea nada.
+    /// Si el usuario lo borró entretanto, se registra igualmente y no se recrea sin confirmación.
+    private func recoverRegistration(of created: SavedItemRecord) async throws -> SaveOutcome {
+        do {
+            try await registry.save(created)
+        } catch {
+            throw SaveError.createdButNotRegistered(created)
+        }
+        await unregistered.forget(created.intentID)
+        let stillExists = try await storeCall { try await presence.itemExists(created.reference) }
+        return stillExists ? .registrationRecovered(created) : .previouslySavedButMissing(created)
     }
 
     private enum PreparedDraft: Sendable {
@@ -289,5 +373,25 @@ public struct SaveConfirmedTaskUseCase: Sendable {
         } catch {
             throw SaveError.registry(String(describing: error))
         }
+    }
+}
+
+/// Elementos que EventKit creó en esta sesión pero cuyo registro no se pudo guardar.
+///
+/// Solo vive en memoria: si la app se cierra, se pierde, y queda la marca pendiente persistida
+/// (`PendingCreation`) para que el siguiente intento pregunte al usuario.
+actor UnregisteredCreations {
+    private var records: [UUID: SavedItemRecord] = [:]
+
+    func record(for intentID: TaskIntentID) -> SavedItemRecord? {
+        records[intentID.uuid]
+    }
+
+    func remember(_ record: SavedItemRecord) {
+        records[record.intentID.uuid] = record
+    }
+
+    func forget(_ intentID: TaskIntentID) {
+        records[intentID.uuid] = nil
     }
 }
