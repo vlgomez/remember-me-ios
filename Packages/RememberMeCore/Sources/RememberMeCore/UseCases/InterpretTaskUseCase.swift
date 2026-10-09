@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Es el único punto de entrada que debería usar la interfaz: valida siempre lo que devuelve
 /// el parser, sea determinista o de IA, así que ninguna implementación puede saltarse las reglas.
-/// No guarda nada: guardar en Reminders o Calendar llegará en la Fase B.
+/// No guarda nada: para guardar en Reminders o Calendar se usa `SaveConfirmedTaskUseCase`.
 public struct InterpretTaskUseCase: Sendable {
     private let parser: any TaskIntentParser
     private let context: ParsingContext
