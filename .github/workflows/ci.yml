@@ -34,6 +34,10 @@ jobs:
         run: |
           summary="$(grep -E "Executed [0-9]+ tests?, with" "$RUNNER_TEMP/swift-test.log" | tail -1 || true)"
           echo "::notice title=swift test::${summary:-No se encontró el resumen de XCTest}"
+          # Cada fallo o error de compilación de los tests, legible desde la API sin descargar el log.
+          grep -E ": error: " "$RUNNER_TEMP/swift-test.log" | sed "s|$GITHUB_WORKSPACE/||g" | sort -u | head -25 | while IFS= read -r line; do
+            echo "::error title=swift test::${line}"
+          done
 
   ios-build:
     name: App iOS · compilación para simulador
