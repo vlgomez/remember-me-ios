@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Remember Me usa tu calendario para mostrarte la agenda, guardar las citas que confirmes y comprobar que no se crean duplicados. Nunca modifica ni borra eventos sin que se lo pidas.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Remember Me usa Recordatorios para guardar las tareas y compras que confirmes, mostrarte tus listas y comprobar que no se crean duplicados. Nunca modifica ni borra recordatorios sin que se lo pidas.</string>
+</dict>
+</plist>

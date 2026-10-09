@@ -28,8 +28,11 @@ targets:
       - path: RememberMe
         excludes:
           - "**/.gitkeep"
+          # Info.plist no es un recurso: se procesa a través de INFOPLIST_FILE.
+          - "Info.plist"
     dependencies:
       - package: RememberMeCore
+      - sdk: EventKit.framework
     settings:
       base:
         # Cambia el identificador por uno tuyo antes de firmar para un dispositivo.
@@ -37,9 +40,14 @@ targets:
         PRODUCT_NAME: RememberMe
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: "YES"
+        # Xcode combina las claves generadas (INFOPLIST_KEY_*) con este archivo, que solo
+        # contiene las descripciones de privacidad de Calendar y Reminders para iOS 17+:
+        # NSCalendarsFullAccessUsageDescription y NSRemindersFullAccessUsageDescription.
+        # La app pide acceso total con requestFullAccessToEvents/requestFullAccessToReminders;
+        # el CI comprueba que el Info.plist compilado contiene exactamente esas claves.
+        INFOPLIST_FILE: RememberMe/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Remember Me
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
-        # Las descripciones de privacidad de Calendar y Reminders se añadirán en la Fase B.
     scheme: {}
