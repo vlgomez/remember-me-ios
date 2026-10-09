@@ -12,17 +12,26 @@ final class AgendaViewModel {
     private(set) var requestError: String?
 
     private let environment: AppEnvironment
+    /// Se pidió otra recarga mientras había una en curso (por ejemplo, Calendar cambió).
+    private var reloadRequested = false
 
     init(environment: AppEnvironment) {
         self.environment = environment
     }
 
     /// Consulta el permiso y, si hay acceso total, los eventos. Nunca muestra la petición del sistema.
+    /// Si llega otra petición durante la carga, se repite al terminar para no mostrar datos viejos.
     func reload() async {
-        guard !isLoading else { return }
+        guard !isLoading else {
+            reloadRequested = true
+            return
+        }
         isLoading = true
         defer { isLoading = false }
-        state = await environment.loadAgenda.load(days: 7)
+        repeat {
+            reloadRequested = false
+            state = await environment.loadAgenda.load(days: 7)
+        } while reloadRequested
     }
 
     /// Solo se llama cuando el usuario pulsa "Permitir acceso".
