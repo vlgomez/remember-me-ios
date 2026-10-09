@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core-tests:
+    name: RememberMeCore · swift test
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versiones de las herramientas
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Compilar y ejecutar los tests del dominio
+        working-directory: Packages/RememberMeCore
+        run: swift test
+
+  ios-build:
+    name: App iOS · compilación para simulador
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar XcodeGen
+        run: brew install xcodegen
+
+      - name: Generar RememberMe.xcodeproj
+        run: xcodegen generate
+
+      - name: Compilar la app para el simulador (sin firma)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project RememberMe.xcodeproj \
+            -scheme RememberMe \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO

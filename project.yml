@@ -1,0 +1,45 @@
+# Definición del proyecto para XcodeGen (https://github.com/yonaskolb/XcodeGen).
+# El .xcodeproj no se versiona: se genera con `xcodegen generate`.
+
+name: RememberMe
+
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  developmentLanguage: es
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  RememberMeCore:
+    path: Packages/RememberMeCore
+
+targets:
+  RememberMe:
+    type: application
+    platform: iOS
+    sources:
+      - path: RememberMe
+        excludes:
+          - "**/.gitkeep"
+    dependencies:
+      - package: RememberMeCore
+    settings:
+      base:
+        # Cambia el identificador por uno tuyo antes de firmar para un dispositivo.
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.RememberMe
+        PRODUCT_NAME: RememberMe
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: Remember Me
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        # Las descripciones de privacidad de Calendar y Reminders se añadirán en la Fase B.
+    scheme: {}

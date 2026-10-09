@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Xcode (el proyecto se genera con XcodeGen)
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.xcresult
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
