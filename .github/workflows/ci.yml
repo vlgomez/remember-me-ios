@@ -18,10 +18,22 @@ jobs:
           sw_vers
           xcodebuild -version
           swift --version
+          tools="$(sw_vers -productName) $(sw_vers -productVersion) · $(xcodebuild -version | head -1) · $(swift --version 2>&1 | head -1)"
+          echo "::notice title=Herramientas (tests)::${tools}"
 
       - name: Compilar y ejecutar los tests del dominio
         working-directory: Packages/RememberMeCore
-        run: swift test
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/swift-test.log"
+
+      # Publica el total de XCTest como anotación del job, visible en la pestaña Actions
+      # y consultable por la API de GitHub sin descargar los logs.
+      - name: Resumen de los tests
+        if: always()
+        run: |
+          summary="$(grep -E "Executed [0-9]+ tests?, with" "$RUNNER_TEMP/swift-test.log" | tail -1 || true)"
+          echo "::notice title=swift test::${summary:-No se encontró el resumen de XCTest}"
 
   ios-build:
     name: App iOS · compilación para simulador
@@ -34,7 +46,11 @@ jobs:
         run: brew install xcodegen
 
       - name: Generar RememberMe.xcodeproj
-        run: xcodegen generate
+        run: |
+          set -o pipefail
+          xcodegen generate 2>&1 | tee "$RUNNER_TEMP/xcodegen.log"
+          test -d RememberMe.xcodeproj
+          echo "::notice title=XcodeGen::$(xcodegen --version 2>&1 | head -1) · RememberMe.xcodeproj generado"
 
       - name: Compilar la app para el simulador (sin firma)
         run: |
@@ -43,4 +59,12 @@ jobs:
             -project RememberMe.xcodeproj \
             -scheme RememberMe \
             -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Resumen de la compilación
+        if: always()
+        run: |
+          result="$(grep -E "\*\* BUILD (SUCCEEDED|FAILED) \*\*" "$RUNNER_TEMP/xcodebuild.log" | tail -1 || true)"
+          warnings="$(grep -c " warning: " "$RUNNER_TEMP/xcodebuild.log" || true)"
+          errors="$(grep -c " error: " "$RUNNER_TEMP/xcodebuild.log" || true)"
+          echo "::notice title=xcodebuild::$(xcodebuild -version | head -1) · ${result:-sin resultado} · avisos: ${warnings:-0} · errores: ${errors:-0}"
