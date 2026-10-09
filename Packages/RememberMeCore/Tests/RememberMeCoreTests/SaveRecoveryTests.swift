@@ -42,6 +42,10 @@ actor FlakyRegistry: SavedItemRegistry {
         await inner.pendingCreation(for: intentID)
     }
 
+    func pendingCreations() async throws -> [PendingCreation] {
+        await inner.pendingCreations()
+    }
+
     func markPending(_ pending: PendingCreation) async throws {
         if failMarkPending {
             throw Failure()
@@ -179,7 +183,7 @@ final class SaveRecoveryTests: XCTestCase {
         XCTAssertEqual(sut.store.snapshot.createdReminders.count, 1)
         let stored = await sut.registry.inner.record(for: intent.id)
         XCTAssertEqual(stored, created)
-        let pending = await sut.registry.inner.allPending()
+        let pending = await sut.registry.inner.pendingCreations()
         XCTAssertTrue(pending.isEmpty, "Registrar borra la marca del intento")
 
         // A partir de aquí, el flujo normal: ya estaba guardado.
@@ -264,10 +268,85 @@ final class SaveRecoveryTests: XCTestCase {
         guard case .saved(let record) = outcome else { return XCTFail("Resultado inesperado: \(outcome)") }
         XCTAssertEqual(record.reference.identifier, "reminder-2")
         XCTAssertEqual(sut.store.snapshot.createdReminders.count, 2, "El usuario eligió crear otro")
-        let pending = await sut.registry.inner.allPending()
+        let pending = await sut.registry.inner.pendingCreations()
         XCTAssertTrue(pending.isEmpty)
         let stored = await sut.registry.inner.record(for: intent.id)
         XCTAssertEqual(stored, record)
+    }
+
+    /// En Añadir, la misma entrada recibe otro identificador de intención tras reiniciar la app.
+    private func sameEntryWithNewID(title: String = "Comprar pilas") throws -> TaskIntent {
+        try StoreFixtures.ready(StoreFixtures.task(
+            id: StoreFixtures.otherID,
+            title: title,
+            scheduledAt: .allDay(Fixtures.day(2026, 10, 9))
+        ))
+    }
+
+    func testAfterRelaunchTheSameEntryWithAnotherIntentIDAlsoAsks() async throws {
+        let intent = try reminderIntent()
+        let sut = makeSUT(registry: FlakyRegistry(failingSaves: 1))
+        _ = await saveError { try await sut.useCase.save(intent) }
+
+        let relaunched = relaunch(sut)
+        let sameEntry = try sameEntryWithNewID(title: "  comprar PILAS ")
+        XCTAssertNotEqual(sameEntry.id, intent.id)
+        let error = await saveError { try await relaunched.useCase.save(sameEntry) }
+
+        guard case .unconfirmedPreviousAttempt(let pending)? = error else {
+            return XCTFail("Error inesperado: \(String(describing: error))")
+        }
+        XCTAssertEqual(pending.intentID, intent.id, "Se informa del intento anterior")
+        XCTAssertEqual(sut.store.snapshot.createdReminders.count, 1, "No se crea a ciegas con otro identificador")
+    }
+
+    func testCreatingDespiteASimilarAttemptRetiresItsMark() async throws {
+        let intent = try reminderIntent()
+        let sut = makeSUT(registry: FlakyRegistry(failingSaves: 1))
+        _ = await saveError { try await sut.useCase.save(intent) }
+        let relaunched = relaunch(sut)
+        let sameEntry = try sameEntryWithNewID()
+
+        let outcome = try await relaunched.useCase.save(
+            sameEntry,
+            options: SaveOptions(createDespiteUnconfirmedAttempt: true)
+        )
+
+        guard case .saved = outcome else { return XCTFail("Resultado inesperado: \(outcome)") }
+        XCTAssertEqual(sut.store.snapshot.createdReminders.count, 2, "El usuario eligió crear otro")
+        let pending = await sut.registry.inner.pendingCreations()
+        XCTAssertTrue(pending.isEmpty, "El usuario ya decidió: la marca anterior no vuelve a preguntar")
+
+        // Desde aquí, la misma intención sigue el flujo normal.
+        let again = try await relaunched.useCase.save(sameEntry)
+        guard case .alreadySaved = again else { return XCTFail("Resultado inesperado: \(again)") }
+        XCTAssertEqual(sut.store.snapshot.createdReminders.count, 2)
+    }
+
+    func testAnUnrelatedEntryIsNotBlockedByAnUnconfirmedAttempt() async throws {
+        let intent = try reminderIntent()
+        let sut = makeSUT(registry: FlakyRegistry(failingSaves: 1))
+        _ = await saveError { try await sut.useCase.save(intent) }
+        let relaunched = relaunch(sut)
+
+        let otherTitle = try sameEntryWithNewID(title: "Comprar pan")
+        let otherDestination = try StoreFixtures.ready(TaskIntent(
+            id: TaskIntentID(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!),
+            action: .userProvided(.createCalendarEvent),
+            title: .userProvided("Comprar pilas"),
+            kind: .userProvided(.appointment),
+            scheduledAt: .userProvided(.timed(Fixtures.at(2026, 10, 9, 10))),
+            timeZone: .userProvided(Fixtures.madrid),
+            reminderPolicy: .userProvided(.noReminder)
+        ))
+        let reminder = try await relaunched.useCase.save(otherTitle)
+        let event = try await relaunched.useCase.save(otherDestination, options: SaveOptions(eventDuration: 1_800))
+
+        guard case .saved = reminder, case .saved = event else {
+            return XCTFail("Resultados inesperados: \(reminder), \(event)")
+        }
+        let pending = await sut.registry.inner.pendingCreations()
+        XCTAssertEqual(pending.map(\.intentID), [intent.id], "La marca del otro intento sigue esperando decisión")
     }
 
     // MARK: - Fallos antes o durante la creación
@@ -292,7 +371,7 @@ final class SaveRecoveryTests: XCTestCase {
         let error = await saveError { try await sut.useCase.save(intent) }
 
         XCTAssertEqual(error, .store(.operationFailed("sin espacio")))
-        let pending = await sut.registry.inner.allPending()
+        let pending = await sut.registry.inner.pendingCreations()
         XCTAssertTrue(pending.isEmpty, "EventKit no creó nada: la marca se retira")
 
         sut.store.update { $0.createFailure = nil }

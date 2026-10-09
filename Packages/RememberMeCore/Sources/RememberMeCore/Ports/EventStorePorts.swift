@@ -44,6 +44,9 @@ public protocol SavedItemRegistry: Sendable {
     /// Marca de un intento anterior que no llegó a confirmarse, si la hay.
     func pendingCreation(for intentID: TaskIntentID) async throws -> PendingCreation?
 
+    /// Todas las marcas pendientes, de la más antigua a la más reciente.
+    func pendingCreations() async throws -> [PendingCreation]
+
     /// Anota un intento antes de llamar a EventKit. Si falla, no se debe crear nada.
     func markPending(_ pending: PendingCreation) async throws
 

@@ -34,7 +34,7 @@ public actor InMemorySavedItemRegistry: SavedItemRegistry {
         records.values.sorted { $0.savedAt < $1.savedAt }
     }
 
-    public func allPending() -> [PendingCreation] {
+    public func pendingCreations() -> [PendingCreation] {
         pending.values.sorted { $0.startedAt < $1.startedAt }
     }
 }
@@ -92,6 +92,10 @@ public actor JSONFileSavedItemRegistry: SavedItemRegistry {
         var contents = try load()
         contents.pending[pendingCreation.intentID.uuid] = pendingCreation
         try write(contents)
+    }
+
+    public func pendingCreations() throws -> [PendingCreation] {
+        try load().pending.values.sorted { $0.startedAt < $1.startedAt }
     }
 
     public func clearPending(for intentID: TaskIntentID) throws {

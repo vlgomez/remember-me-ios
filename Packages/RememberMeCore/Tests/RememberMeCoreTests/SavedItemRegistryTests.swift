@@ -92,6 +92,15 @@ final class SavedItemRegistryTests: XCTestCase {
         XCTAssertNil(afterSave, "Guardar el registro borra la marca en la misma operación")
     }
 
+    func testPendingMarkMatchesTheSameDestinationAndTitle() {
+        let pending = makePending()
+
+        XCTAssertTrue(pending.matches(destination: .appleReminders, title: "Comprar pilas"))
+        XCTAssertTrue(pending.matches(destination: .appleReminders, title: "  comprar PILAS\n"))
+        XCTAssertFalse(pending.matches(destination: .appleReminders, title: "Comprar pila"))
+        XCTAssertFalse(pending.matches(destination: .appleCalendar, title: "Comprar pilas"))
+    }
+
     func testFilePendingMarkSurvivesANewInstanceAndIsClearedBySaving() async throws {
         let paths = makeTemporaryFileURL()
         defer { try? FileManager.default.removeItem(at: paths.directory) }
@@ -104,7 +113,9 @@ final class SavedItemRegistryTests: XCTestCase {
 
         let afterRelaunch = JSONFileSavedItemRegistry(fileURL: paths.file)
         let loaded = try await afterRelaunch.pendingCreation(for: pending.intentID)
+        let all = try await afterRelaunch.pendingCreations()
         XCTAssertEqual(loaded, pending, "La marca sobrevive a un cierre de la app")
+        XCTAssertEqual(Set(all), [pending, other])
 
         try await afterRelaunch.save(makeRecord())
         try await afterRelaunch.clearPending(for: other.intentID)

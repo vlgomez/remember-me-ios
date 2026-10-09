@@ -175,6 +175,10 @@ struct FailingRegistry: SavedItemRegistry {
         throw Failure()
     }
 
+    func pendingCreations() async throws -> [PendingCreation] {
+        throw Failure()
+    }
+
     func markPending(_ pending: PendingCreation) async throws {
         throw Failure()
     }

@@ -12,9 +12,10 @@ public struct SaveOptions: Sendable, Hashable {
     /// Si la intención ya se guardó y el elemento se borró después desde Calendar o Reminders,
     /// solo se vuelve a crear si el usuario lo pide explícitamente.
     public var recreateIfMissing: Bool
-    /// Si un intento anterior de guardar esta intención no llegó a confirmarse
-    /// (`SaveError.unconfirmedPreviousAttempt`), solo se vuelve a crear si el usuario lo pide
-    /// explícitamente, sabiendo que puede quedar un duplicado.
+    /// Si un intento anterior de guardar esta intención, o una con el mismo destino y título, no
+    /// llegó a confirmarse (`SaveError.unconfirmedPreviousAttempt`), solo se crea si el usuario lo
+    /// pide explícitamente, sabiendo que puede quedar un duplicado. Al guardar así, se retiran las
+    /// marcas de esos intentos: el usuario ya ha decidido sobre ellos.
     public var createDespiteUnconfirmedAttempt: Bool
 
     public init(
@@ -75,9 +76,10 @@ public enum SaveError: Error, Sendable, Hashable {
     /// EventKit creó el elemento, pero su referencia no se pudo guardar en el registro.
     /// El elemento existe; un reintento en esta sesión solo completa el registro, sin crear otro.
     case createdButNotRegistered(SavedItemRecord)
-    /// Hay un intento anterior de guardar esta intención cuyo resultado no se pudo confirmar
-    /// (por ejemplo, la app se cerró o el registro falló justo después de crear). Puede que el
-    /// elemento ya exista. No se crea nada sin `createDespiteUnconfirmedAttempt`.
+    /// Hay un intento anterior de guardar esta intención, o una con el mismo destino y título,
+    /// cuyo resultado no se pudo confirmar (por ejemplo, la app se cerró o el registro falló justo
+    /// después de crear). Puede que el elemento ya exista. No se crea nada sin
+    /// `createDespiteUnconfirmedAttempt`.
     case unconfirmedPreviousAttempt(PendingCreation)
 }
 
@@ -202,9 +204,14 @@ public struct EventStoreDraftBuilder: Sendable {
 ///    `SaveError.createdButNotRegistered` con la referencia, que además se guarda en memoria.
 ///    Un reintento en la misma sesión solo vuelve a escribir el registro
 ///    (`SaveOutcome.registrationRecovered`), sin llamar a EventKit.
-/// 4. Si no hay referencia en memoria (la app se reinició) pero sí una marca pendiente, no se crea
-///    nada: se lanza `SaveError.unconfirmedPreviousAttempt` y decide el usuario
+/// 4. Si no hay referencia en memoria (la app se reinició) pero sí una marca pendiente de esta
+///    intención, o de otra con el mismo destino y título, no se crea nada: se lanza
+///    `SaveError.unconfirmedPreviousAttempt` y decide el usuario
 ///    (`SaveOptions.createDespiteUnconfirmedAttempt`).
+///
+/// Límites: la referencia en memoria se pierde al cerrar la app; no se busca en EventKit el
+/// elemento huérfano (un título no lo identifica con certeza); y se asume que si EventKit lanza
+/// un error no ha guardado nada.
 public struct SaveConfirmedTaskUseCase: Sendable {
     private let access: any EventStoreAccessProviding
     private let calendar: any CalendarEventStoring
@@ -271,7 +278,8 @@ public struct SaveConfirmedTaskUseCase: Sendable {
             throw SaveError.permission(entity, permission)
         }
 
-        // 4. Duplicados: la referencia persistente manda, no el título.
+        // 4. Duplicados: la referencia persistente manda. El título solo se usa para preguntar
+        //    ante un intento sin confirmar, nunca para dar algo por guardado.
         let previous = try await registryCall { try await registry.record(for: current.id) }
         if let existing = previous {
             await unregistered.forget(current.id)
@@ -285,10 +293,14 @@ public struct SaveConfirmedTaskUseCase: Sendable {
         } else if let created = await unregistered.record(for: current.id) {
             // Este proceso sabe qué creó EventKit: se completa el registro sin volver a crear.
             return try await recoverRegistration(of: created)
-        } else if let pending = try await registryCall({ try await registry.pendingCreation(for: current.id) }),
-                  !options.createDespiteUnconfirmedAttempt {
-            // Un intento anterior pudo crear el elemento y no hay forma de saberlo con certeza.
-            throw SaveError.unconfirmedPreviousAttempt(pending)
+        }
+        // Un intento anterior pudo crear el elemento y no hay forma de saberlo con certeza.
+        var unconfirmed: [PendingCreation] = []
+        if previous == nil {
+            unconfirmed = try await unconfirmedAttempts(for: current)
+        }
+        if let first = unconfirmed.first, !options.createDespiteUnconfirmedAttempt {
+            throw SaveError.unconfirmedPreviousAttempt(first)
         }
 
         // 5. Anotar el intento antes de crear. Si no se puede anotar, no se crea nada.
@@ -334,7 +346,23 @@ public struct SaveConfirmedTaskUseCase: Sendable {
             throw SaveError.createdButNotRegistered(record)
         }
         await unregistered.forget(current.id)
+        // El usuario decidió crear pese a esos intentos: sus marcas ya no deben volver a preguntar.
+        // Si no se pueden retirar, solo se preguntará de más.
+        for stale in unconfirmed where stale.intentID != current.id {
+            try? await registry.clearPending(for: stale.intentID)
+        }
         return .saved(record)
+    }
+
+    /// Marca de esta intención y marcas de otras con el mismo destino y título (en Añadir, la misma
+    /// entrada recibe otro identificador tras reiniciar la app). La de esta intención va primero.
+    private func unconfirmedAttempts(for intent: TaskIntent) async throws -> [PendingCreation] {
+        let title = intent.title.value
+        let destination = intent.destination
+        let all = try await registryCall { try await registry.pendingCreations() }
+        let own = all.filter { $0.intentID == intent.id }
+        let similar = all.filter { $0.intentID != intent.id && $0.matches(destination: destination, title: title) }
+        return own + similar
     }
 
     /// Completa el registro de un elemento que EventKit ya creó en esta sesión. No crea nada.

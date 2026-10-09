@@ -148,8 +148,8 @@ public struct SavedItemRecord: Sendable, Hashable, Codable {
 /// Crear un elemento en EventKit y escribir su referencia en el registro local son dos
 /// operaciones independientes: no forman una transacción. Si la escritura final falla, o la app
 /// se cierra entre las dos, esta marca queda como prueba de que hubo un intento cuyo resultado
-/// no se pudo confirmar, y el siguiente guardado de la misma intención no crea nada sin
-/// preguntar al usuario.
+/// no se pudo confirmar, y el siguiente guardado de la misma intención (o de otra con el mismo
+/// destino y título) no crea nada sin preguntar al usuario.
 public struct PendingCreation: Sendable, Hashable, Codable {
     public let intentID: TaskIntentID
     public let destination: TaskDestination
@@ -162,6 +162,17 @@ public struct PendingCreation: Sendable, Hashable, Codable {
         self.destination = destination
         self.title = title
         self.startedAt = startedAt
+    }
+
+    /// Mismo destino y mismo título, sin distinguir mayúsculas ni espacios al principio o al final.
+    ///
+    /// Sirve para reconocer el intento cuando la misma entrada llega con otro identificador de
+    /// intención (en Añadir, el identificador solo se conserva durante la sesión).
+    public func matches(destination: TaskDestination, title: String) -> Bool {
+        guard self.destination == destination else { return false }
+        let other = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let own = self.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return own.caseInsensitiveCompare(other) == .orderedSame
     }
 }
 
