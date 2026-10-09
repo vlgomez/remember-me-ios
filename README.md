@@ -96,6 +96,11 @@ Antes de instalar en un iPhone, cambia `PRODUCT_BUNDLE_IDENTIFIER` en `project.y
 - Respeta `TaskDate.allDay`: un recordatorio de día completo se guarda sin hora ni zona horaria.
 - Solo crea elementos nuevos. No modifica, completa ni borra eventos o recordatorios existentes.
 - **Sin duplicados:** registra cada intención guardada con el identificador del elemento creado (`calendarItemIdentifier` y, si existe, `calendarItemExternalIdentifier`) en `Application Support/RememberMe/saved-items.json`. Repetir el guardado devuelve el elemento existente. Si el usuario lo borró fuera de la app, solo se vuelve a crear si lo confirma. Si el registro no se puede leer, no se guarda nada.
+- **Fallo entre EventKit y el registro:** crear en EventKit y escribir en `saved-items.json` son dos operaciones independientes, no una transacción atómica. Para que un fallo entre ambas no acabe en un duplicado silencioso:
+  1. Antes de crear se anota el intento en el registro (`PendingCreation`: intención, destino, título y hora). Si esa anotación no se puede escribir, no se llama a EventKit.
+  2. Si EventKit devuelve un error, se retira la marca: se da por hecho que no creó nada y se puede reintentar con normalidad.
+  3. Si EventKit crea el elemento y falla la escritura de su referencia, el guardado termina con `SaveError.createdButNotRegistered`, que incluye la referencia creada. La app lo dice así: el elemento existe y volver a pulsar «Guardar» solo completa el registro. Mientras la app siga abierta, el reintento no llama a EventKit (`SaveOutcome.registrationRecovered`); si el usuario borró el elemento entretanto, se registra y no se recrea sin confirmación.
+  4. Si la app se cerró antes de completar el registro, solo queda la marca. Guardar la misma intención, u otra con el mismo destino y el mismo título (sin distinguir mayúsculas), no crea nada: devuelve `SaveError.unconfirmedPreviousAttempt` y la app pregunta. Solo se crea si el usuario elige «Crear igualmente», y entonces se retiran esas marcas.
 - **Sin avisos duplicados:** las entradas manuales no crean alarmas. El registro anota si un elemento lleva alarma de EventKit, para que la Fase D no programe además una notificación local.
 
 ### Pruebas que todavía requieren un iPhone (o un simulador interactivo)
@@ -105,6 +110,7 @@ Antes de instalar en un iPhone, cambia `PRODUCT_BUNDLE_IDENTIFIER` en `project.y
 - Crear un recordatorio de día completo y comprobar en Recordatorios que no aparece a medianoche.
 - Crear un evento y comprobar si Calendario le añade sus avisos por defecto.
 - Repetir el guardado, borrar el elemento en Calendario o Recordatorios y volver a guardar.
+- Un fallo real de disco al escribir `saved-items.json` justo después de crear (en los tests se simula con un registro que falla a propósito).
 - Listas de solo lectura, cuentas de iCloud o Exchange, y sincronización entre dispositivos.
 
 ## Reglas del dominio
@@ -150,6 +156,13 @@ Cualquier otra cosa se queda en el título. El parser nunca rellena un hueco por
 
 - La integración con EventKit solo se ha compilado con el SDK real; no se ha ejecutado en un simulador ni en un iPhone. Los servicios de `Services/EventKit` no tienen tests automáticos porque necesitan permisos reales; la lógica que los usa sí está probada con dobles en `RememberMeCore`.
 - La prevención de duplicados se basa en el identificador de la intención. En Añadir, repetir el mismo contenido durante la sesión reutiliza el identificador; una intención nueva con el mismo contenido en otra sesión (o, en la Fase C, una frase escrita de nuevo) no se detecta todavía como duplicado.
+- La recuperación tras un fallo del registro tiene límites, porque EventKit y el archivo no forman una transacción:
+  - La referencia de un elemento creado pero no registrado solo se conserva en memoria. Si la app se cierra antes del reintento, se pierde y queda solo la marca del intento.
+  - Con solo la marca, la app no sabe si el elemento llegó a crearse y no lo busca en EventKit: un título no identifica un elemento con certeza. Por eso pregunta, y si el usuario elige «Crear igualmente» puede quedar un duplicado que él mismo ha aceptado.
+  - «No crear» deja la marca: el siguiente guardado con el mismo destino y título volverá a preguntar.
+  - Si tampoco se puede retirar la marca tras un error de EventKit, el siguiente intento pregunta aunque no se creara nada (se prefiere preguntar de más a duplicar).
+  - Se asume que, si EventKit lanza un error al guardar, no ha guardado el elemento.
+  - Si el registro sigue sin poder escribirse, los reintentos no crean nada nuevo, pero tampoco pueden completar el registro hasta que se resuelva el problema de disco.
 - EventKit puede cambiar `calendarItemIdentifier` tras una sincronización completa; la app prueba entonces con el identificador externo, que puede no existir aún en elementos recién creados.
 - Los eventos se crean en el calendario predeterminado y los recordatorios en la lista elegida o en la predeterminada; no se puede elegir calendario.
 - Añadir avisos a eventos existentes («Avísame dos horas antes de mi cita del jueves») no está implementado: devuelve `unsupportedAction` y no modifica nada.
