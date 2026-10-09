@@ -59,12 +59,29 @@ jobs:
             -project RememberMe.xcodeproj \
             -scheme RememberMe \
             -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
 
       - name: Resumen de la compilación
         if: always()
         run: |
-          result="$(grep -E "\*\* BUILD (SUCCEEDED|FAILED) \*\*" "$RUNNER_TEMP/xcodebuild.log" | tail -1 || true)"
-          warnings="$(grep -c " warning: " "$RUNNER_TEMP/xcodebuild.log" || true)"
-          errors="$(grep -c " error: " "$RUNNER_TEMP/xcodebuild.log" || true)"
-          echo "::notice title=xcodebuild::$(xcodebuild -version | head -1) · ${result:-sin resultado} · avisos: ${warnings:-0} · errores: ${errors:-0}"
+          log="$RUNNER_TEMP/xcodebuild.log"
+          result="$(grep -E "\*\* BUILD (SUCCEEDED|FAILED) \*\*" "$log" | tail -1 || true)"
+          warnings="$(grep -E ": warning: " "$log" | sort -u | wc -l | tr -d ' ' || true)"
+          errors="$(grep -E ": error: " "$log" | sort -u | wc -l | tr -d ' ' || true)"
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-version 2>/dev/null || echo '?')"
+          echo "::notice title=xcodebuild::$(xcodebuild -version | head -1) · SDK iOS Simulator ${sdk} · ${result:-sin resultado} · avisos: ${warnings:-0} · errores: ${errors:-0}"
+          # Cada aviso y error distinto como anotación, legible desde la API sin descargar el log.
+          grep -E ": (warning|error): " "$log" | sed "s|$GITHUB_WORKSPACE/||g" | sort -u | head -25 | while IFS= read -r line; do
+            if [[ "$line" == *": error: "* ]]; then
+              echo "::error title=xcodebuild::${line}"
+            else
+              echo "::warning title=xcodebuild::${line}"
+            fi
+          done
+
+      - name: Comprobar claves de privacidad del Info.plist compilado
+        run: |
+          bash scripts/check-privacy-keys.sh \
+            "$RUNNER_TEMP/DerivedData/Build/Products/Debug-iphonesimulator/RememberMe.app" \
+            RememberMe
